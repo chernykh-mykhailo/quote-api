@@ -103,7 +103,7 @@ function drawQuote (options) {
     const replyTextNode = reply.isQuote
       ? accentBlock(s, reply.nameColor, { children: [leaf(reply.text)] })
       : leaf(reply.text)
-    const replyTexts = box({ dir: 'col', gap: s(4), children: [leaf(reply.name), replyTextNode] })
+    const replyTexts = box({ dir: 'col', gap: s(6), children: [leaf(reply.name), replyTextNode] })
     const inner = reply.thumb
       ? box({
         dir: 'row',
