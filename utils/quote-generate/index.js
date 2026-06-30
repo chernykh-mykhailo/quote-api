@@ -175,7 +175,7 @@ class QuoteGenerate {
           0, replyNameFontSize, width * 0.9, replyNameFontSize, emojiBrand, this.telegram
         )
 
-        const replyTextFontSize = 21 * scale
+        const replyTextFontSize = 16 * scale
         const replyTextCanvas = await drawMultilineText(
           replyText, message.replyMessage.entities || [],
           replyTextFontSize, textColor,
