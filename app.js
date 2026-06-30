@@ -48,6 +48,7 @@ app.use(require('./helpers').helpersApi)
 const route = new Router()
 
 const routes = require('./routes')
+const emojiAnimRoutes = require('./routes/emoji-anim')
 
 // Health check endpoint for Docker/Coolify
 route.get('/health', (ctx) => {
@@ -56,6 +57,7 @@ route.get('/health', (ctx) => {
 })
 
 route.use('/*', routes.routeApi.routes())
+route.use('/emoji-anim', emojiAnimRoutes.routes())
 
 app.use(route.routes())
 

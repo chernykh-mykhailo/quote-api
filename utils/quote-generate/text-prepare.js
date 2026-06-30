@@ -177,6 +177,7 @@ async function loadEmojiImages (emojis, emojiBrand) {
 }
 
 // Load custom emoji stickers via Telegram API
+// Prefers animated versions when available
 async function loadCustomEmojis (customEmojiIds, telegram) {
   const result = {}
   if (customEmojiIds.length === 0 || !telegram) return result
@@ -189,12 +190,43 @@ async function loadCustomEmojis (customEmojiIds, telegram) {
 
   const promises = stickers.map(async sticker => {
     if (!sticker.thumb || !sticker.thumb.file_id) return
-    const fileLink = await telegram.getFileLink(sticker.thumb.file_id).catch(() => null)
-    if (!fileLink) return
-    const data = await loadImageFromUrl(fileLink).catch(() => null)
-    if (!data) return
-    const png = await sharp(data).png({ lossless: true, force: true }).toBuffer()
-    result[sticker.custom_emoji_id] = await loadImage(png).catch(() => null)
+    
+    // Try to load animated version first
+    let image = null
+    
+    // Check if sticker has animation (TGS or WEBM)
+    const isAnimated = sticker.is_animated || false
+    
+    if (isAnimated) {
+      // Try to get animated version via the animation service
+      try {
+        const EmojiAnimationService = require('../../emoji-animation-service')
+        const webpPath = await EmojiAnimationService.getEmojiAnimPath(telegram, sticker.custom_emoji_id)
+        if (webpPath) {
+          const fs = require('fs').promises
+          const buffer = await fs.readFile(webpPath)
+          const png = await sharp(buffer).png({ lossless: true, force: true }).toBuffer()
+          image = await loadImage(png).catch(() => null)
+        }
+      } catch (e) {
+        // Fall back to static if animation fails
+        console.warn(`Failed to load animated emoji ${sticker.custom_emoji_id}, falling back to static:`, e.message)
+      }
+    }
+    
+    // Fallback to static thumbnail if no animation
+    if (!image) {
+      const fileLink = await telegram.getFileLink(sticker.thumb.file_id).catch(() => null)
+      if (!fileLink) return
+      const data = await loadImageFromUrl(fileLink).catch(() => null)
+      if (!data) return
+      const png = await sharp(data).png({ lossless: true, force: true }).toBuffer()
+      image = await loadImage(png).catch(() => null)
+    }
+    
+    if (image) {
+      result[sticker.custom_emoji_id] = image
+    }
   })
 
   await Promise.all(promises).catch(() => {})
