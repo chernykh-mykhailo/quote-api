@@ -7,8 +7,8 @@ const loadImageFromUrl = require('../image-load-url')
 const { AVATAR_COLORS } = require('./constants')
 
 const avatarCache = new LRU({
-  max: 20,
-  maxAge: 1000 * 60 * 5
+  max: 2000,
+  maxAge: 1000 * 60 * 60 * 12 // 12 hours
 })
 
 function avatarImageLetters (letters, color) {
