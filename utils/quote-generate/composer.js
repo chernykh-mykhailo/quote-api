@@ -6,21 +6,28 @@
 // positioned with ad-hoc offsets — parents size themselves from children.
 
 const { createCanvas } = require('canvas')
-const { drawRoundRect, drawGradientRoundRect, roundImage, drawQuoteIcon, drawForwardLabel } = require('./canvas-utils')
+const { drawRoundRect, drawGradientRoundRect, roundImage, drawQuoteIcon, drawLabel, drawForwardLabel } = require('./canvas-utils')
+const { paintMediaBadges } = require('./attachments')
 const { leaf, box, measure, place, render } = require('./layout-box')
 
 // All spacing in logical px (multiplied by scale at use). The single place
 // to tune how a quote breathes.
 const SP = {
   padX: 16, // bubble inner padding → ink, horizontal
-  padY: 15, // bubble inner padding → ink, vertical
-  gap: 9, // vertical rhythm between stacked blocks (name/forward/reply/media/text)
+  padY: 12, // bubble inner padding → first metric box (which adds its own slack)
+  // Vertical rhythm between solid blocks (reply chip, media, attachment).
+  // Text nodes override it with mt 0: their metric line box already carries
+  // the air above the cap line, so stacking at 0 lands on the same
+  // baseline-to-baseline rhythm as the text's own line height.
+  gap: 5,
   headerGap: 8, // min gap between name and sender tag
   maxHeader: 300, // header/forward-label width cap — longer names fade out instead of inflating the bubble
   radius: 25, // bubble corner radius
   radiusGrouped: 7, // corner radius facing a same-sender neighbour bubble
   replyThumb: 34, // reply media thumbnail side
-  shadowPad: 6, // canvas margin so the bubble drop shadow isn't clipped
+  shadowPad: 12, // canvas margin (right/bottom) so the drop shadow isn't clipped
+  shadowPadTop: 4, // canvas margin above the bubble (shadow blur spills up a little)
+  glass: 1.25, // frosted-glass hairline width (border + top edge highlight)
   tail: 14, // bubble tail size (when avatar is shown)
   minWidth: 100, // min bubble width
   avatar: 50, // avatar diameter
@@ -29,7 +36,7 @@ const SP = {
   // Accent block — the modern-Telegram rounded tinted block used for both
   // the reply preview and the partial-quote body: solid bar on the left,
   // accent tint behind, optional ❝ in the corner.
-  block: { padY: 6, padL: 10, padR: 10, padRIcon: 22, bar: 3, icon: 15, iconInset: 5, radius: 8, tint: 0.12, gap: 2 }
+  block: { padY: 6, padL: 10, padR: 10, padRIcon: 22, bar: 3.5, icon: 15, iconInset: 5, radius: 7, tint: 0.14, gap: 3 }
 }
 
 function drawQuote (options) {
@@ -42,6 +49,7 @@ function drawQuote (options) {
     text,
     textBlocks, // [{ canvas, quote: bool }] — text split around blockquote entities
     media,
+    attachment, // pre-rendered in-bubble row canvas (voice/document/audio)
     isForward,
     forwardLabel,
     nameColor,
@@ -65,17 +73,7 @@ function drawQuote (options) {
   if (nameCanvas) {
     let tagLeaf = null
     if (senderTag) {
-      const tagFontSize = s(14)
-      const tmpCtx = createCanvas(1, 1).getContext('2d')
-      tmpCtx.font = `${tagFontSize}px "Noto Sans", "SF Pro", sans-serif`
-      const tagW = Math.ceil(tmpCtx.measureText(senderTag).width) + 4
-      const tagCanvas = createCanvas(tagW, Math.ceil(tagFontSize * 1.4))
-      const tagCtx = tagCanvas.getContext('2d')
-      tagCtx.font = `${tagFontSize}px "Noto Sans", "SF Pro", sans-serif`
-      tagCtx.fillStyle = background.textColor || '#fff'
-      tagCtx.globalAlpha = 0.45
-      tagCtx.fillText(senderTag, 0, tagFontSize)
-      tagLeaf = leaf(tagCanvas)
+      tagLeaf = leaf(drawLabel(senderTag, s(13), background.textColor || '#fff', { alpha: 0.45 }))
     }
     // The header fits into maxHeader as a whole: the name yields (fades)
     // first, "via @bot" and the tag always stay visible.
@@ -94,7 +92,7 @@ function drawQuote (options) {
 
   let forwardNode = null
   if (isForward && forwardLabel) {
-    forwardNode = leaf(drawForwardLabel(forwardLabel, s(22), accent), { maxW: s(SP.maxHeader) })
+    forwardNode = leaf(drawForwardLabel(forwardLabel, s(13), accent), { maxW: s(SP.maxHeader) })
   }
 
   let replyNode = null
@@ -127,7 +125,7 @@ function drawQuote (options) {
 
   // Media-only bubbles (photo with no caption/name/reply) are pure media:
   // the photo IS the bubble, rounded with the bubble radius.
-  const mediaOnly = !!mediaCanvas && !nameCanvas && !text && !reply && !forwardLabel
+  const mediaOnly = !!mediaCanvas && !nameCanvas && !text && !reply && !forwardLabel && !attachment
 
   // Grouped bubbles flatten the left corners that face their neighbours.
   const R = s(SP.radius)
@@ -143,7 +141,7 @@ function drawQuote (options) {
   // below (or no header above) the bubble padding on that side collapses and
   // the media corners inherit the bubble's own radii.
   const isRound = mediaType === 'video_note' // round video — circular mask
-  const hasCaption = Boolean(text) || (Array.isArray(textBlocks) && textBlocks.length > 0)
+  const hasCaption = Boolean(text) || (Array.isArray(textBlocks) && textBlocks.length > 0) || Boolean(attachment)
   const flushable = !!mediaCanvas && !mediaOnly && !isSticker && !isRound
   const flushBottom = flushable && !hasCaption
   const flushTop = flushable && !nameCanvas && !(isForward && forwardLabel) && !reply
@@ -190,24 +188,37 @@ function drawQuote (options) {
             : { tl: mediaRadius.tl * k, tr: mediaRadius.tr * k, br: mediaRadius.br * k, bl: mediaRadius.bl * k }
           ctx.drawImage(roundImage(n.canvas, rSrc), n.x, n.y, n.w, n.h)
         }
+        // Video/GIF overlays are painted in destination space so their size
+        // doesn't depend on the source media resolution.
+        if (media.badge) paintMediaBadges(ctx, n.x, n.y, n.w, n.h, media.badge, scale)
         ctx.restore()
       }
     })
   }
 
+  // Voice/document/audio rows sit in the media slot but behave like text:
+  // padded by the bubble, never flush.
+  const attachmentNode = attachment ? leaf(attachment.canvas) : null
+
   let textNode = null
   if (Array.isArray(textBlocks) && textBlocks.length > 0 && !isQuote) {
     // Text with blockquote entities: plain runs and quote runs stack in one
     // column; each quote run gets the accent block treatment.
-    const parts = textBlocks.map((b) => b.quote
-      ? accentBlock(s, accent, { icon: true, children: [leaf(b.canvas)] })
-      : leaf(b.canvas))
-    textNode = box({ dir: 'col', gap: s(6), children: parts })
+    const parts = textBlocks.map((b) => {
+      if (b.quote) return accentBlock(s, accent, { icon: true, children: [leaf(b.canvas)] })
+      const l = leaf(b.canvas)
+      if (l) l.mt = s(2) // plain runs carry their own metric air
+      return l
+    })
+    textNode = box({ dir: 'col', gap: s(5), children: parts })
   } else if (text) {
     textNode = isQuote
       ? accentBlock(s, accent, { icon: true, children: [leaf(text)] })
       : leaf(text)
   }
+  // Text supplies its own air above the cap line (metric ascent slack) —
+  // no extra flow gap, the name reads like the previous text line.
+  if (textNode && !isQuote) textNode.mt = 0
 
   // ---- Tree ---------------------------------------------------------------
 
@@ -222,14 +233,15 @@ function drawQuote (options) {
   const bubbleBg = (ctx, n) => {
     const one = background.colorOne
     const two = background.colorTwo
+    const glassLw = s(SP.glass)
     const rect = one === two
-      ? drawRoundRect(one, n.w, n.h, radii, tailSize)
-      : drawGradientRoundRect(one, two, n.w, n.h, radii, tailSize)
+      ? drawRoundRect(one, n.w, n.h, radii, tailSize, glassLw)
+      : drawGradientRoundRect(one, two, n.w, n.h, radii, tailSize, glassLw)
     ctx.save()
-    // A soft drop shadow lifts the sticker off any chat wallpaper.
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.18)'
-    ctx.shadowBlur = s(4)
-    ctx.shadowOffsetY = s(1)
+    // A soft neutral drop shadow lifts the sticker off any chat wallpaper.
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.24)'
+    ctx.shadowBlur = s(6)
+    ctx.shadowOffsetY = s(2)
     ctx.drawImage(rect, n.x - (rect._tailOffset || 0), n.y)
     ctx.restore()
   }
@@ -252,7 +264,7 @@ function drawQuote (options) {
       pad: mediaOnly ? 0 : bubblePad,
       minW: mediaOnly ? 0 : s(SP.minWidth),
       bg: bubbleBg,
-      children: [headerNode, forwardNode, replyNode, mediaNode, textNode]
+      children: [headerNode, forwardNode, replyNode, mediaNode, attachmentNode, textNode]
     })
   }
 
@@ -261,11 +273,12 @@ function drawQuote (options) {
   measure(root)
 
   const shadowPad = s(SP.shadowPad)
+  const shadowPadTop = s(SP.shadowPadTop)
   const bubblePosX = s(SP.avatar) + s(SP.avatarGap)
   const width = bubblePosX + root.w + shadowPad
-  const height = Math.max(root.h, avatar ? s(SP.avatar) + s(2) : 0) + shadowPad
+  const height = shadowPadTop + Math.max(root.h, avatar ? s(SP.avatar) + s(2) : 0) + shadowPad
 
-  place(root, bubblePosX, 0)
+  place(root, bubblePosX, shadowPadTop)
 
   const canvas = createCanvas(width, height)
   const ctx = canvas.getContext('2d')
@@ -316,4 +329,4 @@ function accentBlock (s, accent, { icon = false, children }) {
   })
 }
 
-module.exports = { drawQuote }
+module.exports = { drawQuote, SP }

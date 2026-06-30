@@ -6,14 +6,13 @@
 // positioned by flow (column/row) — nothing is placed with hand-tuned
 // absolute offsets.
 //
-// The one non-CSS trick: text canvases from drawMultilineText carry
-// invisible vertical slack (a reserved line below the last baseline), so a
-// text leaf reports its INK height (visible pixel rows) and is painted via
-// a source-crop. Children honestly report their real size once, at intake;
-// everything above is a pure box model.
+// Text canvases from drawMultilineText are metric-exact: their height is
+// (lines-1)*lineHeight + ascent + descent — a constant of the font, never
+// of the glyphs drawn. So a leaf takes every canvas at face value; the only
+// special case is the 1×1 stub returned for empty text, which is dropped so
+// it doesn't occupy a slot in the flow.
 
 const { createCanvas } = require('canvas')
-const { inkBounds } = require('./canvas-utils')
 
 const ZERO_PAD = { t: 0, r: 0, b: 0, l: 0 }
 
@@ -24,30 +23,22 @@ function normPad (pad) {
 }
 
 /**
- * A canvas leaf. By default the vertical ink bounds become the reported
- * height (trim). Pass `trim: false` for canvases whose full size is real
- * (media, avatars). `w`/`h` force a paint size (media scaling), `paint`
- * overrides drawing entirely.
+ * A canvas leaf, taken at its metric size. Empty-text stubs (1×1) are not
+ * elements and resolve to null. `w`/`h` force a paint size (media scaling),
+ * `paint` overrides drawing entirely.
  */
 function leaf (canvas, opts = {}) {
   if (!canvas) return null
-  const trim = opts.trim !== false
-  const ink = trim ? inkBounds(canvas) : null
-  // A trimmed canvas with no visible pixels (drawMultilineText returns a
-  // 1×1 stub for empty text) is not an element — it must not occupy a slot
-  // in the flow and produce a phantom gap.
-  if (trim && !ink) return null
-  const srcY = ink ? ink.top : 0
-  const srcH = ink ? ink.bottom - ink.top + 1 : canvas.height
+  if (canvas.width <= 1 && canvas.height <= 1) return null
   let w = opts.w !== undefined ? opts.w : canvas.width
   if (opts.maxW && w > opts.maxW) w = opts.maxW // overflow renders as a fade
   return {
     kind: 'leaf',
     canvas,
-    srcY,
-    srcH,
+    srcY: 0,
+    srcH: canvas.height,
     w,
-    h: opts.h !== undefined ? opts.h : srcH,
+    h: opts.h !== undefined ? opts.h : canvas.height,
     bleed: !!opts.bleed,
     paint: opts.paint || null
   }
@@ -76,6 +67,14 @@ function box (opts = {}) {
   }
 }
 
+// Vertical flow gap before a column child: the box gap by default, or the
+// child's own `mt` (margin-top) when set — text nodes carry metric slack
+// above their cap line, so they ask for mt 0 and supply the air themselves.
+function gapBefore (box, child, index) {
+  if (index === 0) return 0
+  return child.mt !== undefined ? child.mt : box.gap
+}
+
 /** Bottom-up natural sizing: parent = children + gaps + padding. */
 function measure (n) {
   if (n.kind === 'leaf') return n
@@ -85,12 +84,12 @@ function measure (n) {
   if (n.dir === 'col') {
     // A `bleed` child ignores the horizontal padding (full-width media).
     let outerW = 0
-    for (const c of n.children) {
+    for (let i = 0; i < n.children.length; i++) {
+      const c = n.children[i]
       const cw = c.bleed ? c.w : c.w + n.pad.l + n.pad.r
       if (cw > outerW) outerW = cw
-      h += c.h
+      h += gapBefore(n, c, i) + c.h
     }
-    h += n.gap * Math.max(0, n.children.length - 1)
     n.w = outerW
   } else {
     for (const c of n.children) {
@@ -126,12 +125,14 @@ function place (n, x, y, stretchW) {
   const innerW = n.w - n.pad.l - n.pad.r
   if (n.dir === 'col') {
     let cy = y + n.pad.t
-    for (const c of n.children) {
+    for (let i = 0; i < n.children.length; i++) {
+      const c = n.children[i]
       let cx = x + n.pad.l
       if (c.bleed) cx = x + Math.max(0, (n.w - c.w) / 2) // full-width child, centered
       else if (n.align === 'center' && c.w < innerW) cx += (innerW - c.w) / 2
+      cy += gapBefore(n, c, i)
       place(c, cx, cy, innerW)
-      cy += c.h + n.gap
+      cy += c.h
     }
   } else {
     const crossY = (c) => n.align === 'center'
