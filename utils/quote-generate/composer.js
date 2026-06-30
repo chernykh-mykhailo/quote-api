@@ -102,7 +102,10 @@ function drawQuote (options) {
     // Modern Telegram renders the reply preview as a tinted accent block in
     // the replied sender's color — same visual language as a quote. A media
     // thumbnail (when the replied message has one) sits left of the texts.
-    const replyTexts = box({ dir: 'col', gap: s(4), children: [leaf(reply.name), leaf(reply.text)] })
+    const replyTextNode = reply.isQuote
+      ? accentBlock(s, reply.nameColor, { children: [leaf(reply.text)] })
+      : leaf(reply.text)
+    const replyTexts = box({ dir: 'col', gap: s(4), children: [leaf(reply.name), replyTextNode] })
     const inner = reply.thumb
       ? box({
         dir: 'row',

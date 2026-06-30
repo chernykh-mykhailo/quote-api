@@ -183,7 +183,12 @@ class QuoteGenerate {
         )
 
         if (replyNameCanvas && replyTextCanvas) {
-          replyData = { name: replyNameCanvas, nameColor: replyNameColor, text: replyTextCanvas }
+          replyData = {
+            name: replyNameCanvas,
+            nameColor: replyNameColor,
+            text: replyTextCanvas,
+            isQuote: !!message.replyMessage.isQuote
+          }
 
           // Thumbnail of the replied media (photo/video/sticker…), like the
           // modern Telegram reply preview. Best-effort — silently skipped.
