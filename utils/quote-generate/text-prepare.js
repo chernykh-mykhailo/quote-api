@@ -200,7 +200,7 @@ async function loadCustomEmojis (customEmojiIds, telegram) {
     if (isAnimated) {
       // Try to get animated version via the animation service
       try {
-        const EmojiAnimationService = require('../../emoji-animation-service')
+        const EmojiAnimationService = require('../emoji-animation-service')
         const webpPath = await EmojiAnimationService.getEmojiAnimPath(telegram, sticker.custom_emoji_id)
         if (webpPath) {
           const fs = require('fs').promises

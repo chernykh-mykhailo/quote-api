@@ -7,7 +7,7 @@ const loadImageFromUrl = require('./image-load-url')
 
 const execAsync = promisify(exec)
 
-const CACHE_DIR = path.resolve(__dirname, '../../data/custom_emojis_anim')
+const CACHE_DIR = path.resolve(__dirname, '../data/custom_emojis_anim')
 
 // Ensure cache directory exists
 async function ensureCacheDir () {
